@@ -1,3 +1,10 @@
+import { FewShotClassifier } from './fewShotClassifier';
+import type {
+  TrainingSample,
+  ClassPrototype,
+  FewShotResult,
+} from './fewShotClassifier';
+
 export interface InferenceDistribution {
   label: string;
   probability: number;
@@ -8,7 +15,14 @@ export interface InferenceResult {
   confidence: number;
   distribution: InferenceDistribution[];
   inferenceTime: number;
+  fewShot?: FewShotResult;
 }
+
+const fewShotClassifier = new FewShotClassifier({
+  similarityThreshold: 0.6,
+  minSamplesPerClass: 3,
+  temperature: 0.1,
+});
 
 const COMMAND_LABELS = [
   "打开设置",
@@ -251,19 +265,118 @@ ctx.onmessage = (event: MessageEvent) => {
     return;
   }
 
+  if (data.type === 'addSample') {
+    try {
+      const { sample, requestId } = data;
+      const addedSample = fewShotClassifier.addSample(sample);
+      ctx.postMessage({
+        type: 'sampleAdded',
+        sample: addedSample,
+        requestId
+      });
+    } catch (error) {
+      ctx.postMessage({
+        type: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        requestId: data.requestId
+      });
+    }
+    return;
+  }
+
+  if (data.type === 'removeSample') {
+    try {
+      const { sampleId, requestId } = data;
+      const success = fewShotClassifier.removeSample(sampleId);
+      ctx.postMessage({
+        type: 'sampleRemoved',
+        success,
+        requestId
+      });
+    } catch (error) {
+      ctx.postMessage({
+        type: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        requestId: data.requestId
+      });
+    }
+    return;
+  }
+
+  if (data.type === 'removeClass') {
+    try {
+      const { commandId, requestId } = data;
+      const success = fewShotClassifier.removeClass(commandId);
+      ctx.postMessage({
+        type: 'classRemoved',
+        success,
+        requestId
+      });
+    } catch (error) {
+      ctx.postMessage({
+        type: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        requestId: data.requestId
+      });
+    }
+    return;
+  }
+
+  if (data.type === 'getSamples') {
+    try {
+      const { requestId } = data;
+      const samples = fewShotClassifier.getAllSamples();
+      const prototypes = fewShotClassifier.getAllPrototypes();
+      ctx.postMessage({
+        type: 'samplesList',
+        samples,
+        prototypes,
+        requestId
+      });
+    } catch (error) {
+      ctx.postMessage({
+        type: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        requestId: data.requestId
+      });
+    }
+    return;
+  }
+
   if (data.type === 'infer') {
     try {
       const { audioData, sourceSampleRate, requestId } = data;
 
       const { features } = workerPrepareForInference(audioData, sourceSampleRate);
 
-      const result = workerMockInference(features);
+      const mockResult = workerMockInference(features);
 
-      ctx.postMessage({
-        type: 'result',
-        result,
-        requestId
-      });
+      const prototypes = fewShotClassifier.getAllPrototypes();
+
+      if (prototypes.length > 0) {
+        const fewShotResult = fewShotClassifier.classify(audioData, sourceSampleRate);
+        const finalResult: InferenceResult = {
+          label: fewShotResult.label,
+          confidence: fewShotResult.confidence,
+          distribution: fewShotResult.distribution.map((d) => ({
+            label: d.label,
+            probability: d.probability,
+          })),
+          inferenceTime: mockResult.inferenceTime,
+          fewShot: fewShotResult,
+        };
+        ctx.postMessage({
+          type: 'result',
+          result: finalResult,
+          requestId
+        });
+      } else {
+        ctx.postMessage({
+          type: 'result',
+          result: mockResult,
+          requestId
+        });
+      }
     } catch (error) {
       ctx.postMessage({
         type: 'error',

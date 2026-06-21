@@ -1,5 +1,6 @@
-import { Pencil, Trash2, Settings, Camera, SkipForward, SkipBack, Play, Volume2, Volume1, Globe, Mic, Terminal, Zap } from 'lucide-react';
+import { Pencil, Trash2, Settings, Camera, SkipForward, SkipBack, Play, Volume2, Volume1, Globe, Mic, Terminal, Zap, Brain, Check } from 'lucide-react';
 import type { Command } from '@/stores/commandStore';
+import { useSampleStore } from '@/stores/sampleStore';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Settings, Camera, SkipForward, SkipBack, Play, Volume2, Volume1, Globe, Mic, Terminal, Zap,
@@ -22,10 +23,13 @@ interface CommandCardProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
+  onTrain: (id: string) => void;
 }
 
-export default function CommandCard({ command, onEdit, onDelete, onToggle }: CommandCardProps) {
+export default function CommandCard({ command, onEdit, onDelete, onToggle, onTrain }: CommandCardProps) {
   const IconComponent = iconMap[command.icon] || Zap;
+  const sampleCount = useSampleStore((s) => s.getSampleCountForCommand(command.id));
+  const isTrained = sampleCount >= 3;
 
   return (
     <div className="glass-card p-4 flex items-center gap-4">
@@ -41,6 +45,12 @@ export default function CommandCard({ command, onEdit, onDelete, onToggle }: Com
           <span className={`text-[10px] px-1.5 py-0.5 rounded ${typeColors[command.actionType]}`}>
             {typeLabels[command.actionType]}
           </span>
+          {isTrained && (
+            <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#3FB950]/20 text-[#3FB950] border border-[#3FB950]/30">
+              <Check className="w-2.5 h-2.5" />
+              已训练
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-1">
           {command.keywords.map((kw) => (
@@ -54,7 +64,7 @@ export default function CommandCard({ command, onEdit, onDelete, onToggle }: Com
         </div>
       </div>
 
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={() => onToggle(command.id)}
           className={`relative w-10 h-5 rounded-full transition-colors ${
@@ -66,6 +76,17 @@ export default function CommandCard({ command, onEdit, onDelete, onToggle }: Com
               command.enabled ? 'left-[22px]' : 'left-0.5'
             }`}
           />
+        </button>
+
+        <button
+          onClick={() => onTrain(command.id)}
+          className={`p-1.5 rounded-md transition-colors ${
+            isTrained
+              ? 'bg-[#3FB950]/10 text-[#3FB950] hover:bg-[#3FB950]/20'
+              : 'hover:bg-[#21262D] text-[#8B949E] hover:text-[#00FFC8]'
+          }`}
+        >
+          <Brain className="w-4 h-4" />
         </button>
 
         <button

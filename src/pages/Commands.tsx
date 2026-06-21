@@ -3,12 +3,16 @@ import { Plus } from 'lucide-react';
 import { useCommandStore } from '@/stores/commandStore';
 import CommandCard from '@/components/CommandCard';
 import CommandEditDrawer from '@/components/CommandEditDrawer';
+import CommandTrainer from '@/components/CommandTrainer';
 import type { Command } from '@/stores/commandStore';
 
 export default function Commands() {
   const { commands, confidenceThreshold, addCommand, updateCommand, deleteCommand, toggleCommand, setConfidenceThreshold } = useCommandStore();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingCommand, setEditingCommand] = useState<Command | null>(null);
+  const [trainerOpen, setTrainerOpen] = useState(false);
+  const [trainingCommandId, setTrainingCommandId] = useState<string | null>(null);
+  const [trainingCommandLabel, setTrainingCommandLabel] = useState<string | null>(null);
 
   const handleAdd = () => {
     setEditingCommand(null);
@@ -29,6 +33,15 @@ export default function Commands() {
 
   const handleToggle = (id: string) => {
     toggleCommand(id);
+  };
+
+  const handleTrain = (id: string) => {
+    const cmd = commands.find((c) => c.id === id);
+    if (cmd) {
+      setTrainingCommandId(cmd.id);
+      setTrainingCommandLabel(cmd.label);
+      setTrainerOpen(true);
+    }
   };
 
   const handleSave = (data: Omit<Command, 'id' | 'enabled'>) => {
@@ -86,6 +99,7 @@ export default function Commands() {
               onEdit={handleEdit}
               onDelete={handleDelete}
               onToggle={handleToggle}
+              onTrain={handleTrain}
             />
           ))}
         </div>
@@ -96,6 +110,14 @@ export default function Commands() {
         command={editingCommand}
         onSave={handleSave}
         onClose={() => setDrawerOpen(false)}
+      />
+
+      <CommandTrainer
+        isOpen={trainerOpen}
+        commandId={trainingCommandId}
+        commandLabel={trainingCommandLabel}
+        onClose={() => setTrainerOpen(false)}
+        onTrained={() => {}}
       />
     </div>
   );

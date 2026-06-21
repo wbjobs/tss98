@@ -1,22 +1,28 @@
 import type { InferenceResult } from './mockInference';
+import type { TrainingSample, ClassPrototype } from './fewShotClassifier';
 
-interface PendingRequest {
-  resolve: (result: InferenceResult) => void;
-  reject: (error: Error) => void;
-}
-
-interface WorkerMessage {
+interface WorkerResponse {
   type: string;
   requestId?: string;
   result?: InferenceResult;
+  sample?: TrainingSample;
+  samples?: TrainingSample[];
+  prototypes?: ClassPrototype[];
+  success?: boolean;
   error?: string;
 }
+
+type PendingResolver =
+  | { kind: 'infer'; resolve: (r: InferenceResult) => void; reject: (e: Error) => void }
+  | { kind: 'sample'; resolve: (s: TrainingSample) => void; reject: (e: Error) => void }
+  | { kind: 'success'; resolve: (s: boolean) => void; reject: (e: Error) => void }
+  | { kind: 'list'; resolve: (v: { samples: TrainingSample[]; prototypes: ClassPrototype[] }) => void; reject: (e: Error) => void };
 
 export class InferenceWorkerManager {
   private static instance: InferenceWorkerManager | null = null;
   private worker: Worker | null = null;
-  private pendingRequests: Map<string, PendingRequest> = new Map();
-  private defaultTimeout: number = 2000;
+  private pendingRequests: Map<string, PendingResolver> = new Map();
+  private defaultTimeout: number = 5000;
 
   private constructor() {}
 
@@ -38,7 +44,7 @@ export class InferenceWorkerManager {
         type: 'module',
       });
 
-      const handleReady = (e: MessageEvent<WorkerMessage>) => {
+      const handleReady = (e: MessageEvent<WorkerResponse>) => {
         if (e.data.type === 'ready') {
           this.worker?.removeEventListener('message', handleReady);
           this.worker?.addEventListener('message', this.handleMessage.bind(this));
@@ -74,6 +80,7 @@ export class InferenceWorkerManager {
       }, this.defaultTimeout);
 
       this.pendingRequests.set(id, {
+        kind: 'infer',
         resolve: (result) => {
           clearTimeout(timeoutId);
           resolve(result);
@@ -93,6 +100,146 @@ export class InferenceWorkerManager {
     });
   }
 
+  addSample(params: {
+    commandId: string;
+    label: string;
+    audioData: Float32Array;
+    sampleRate: number;
+  }): Promise<TrainingSample> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error('Worker not initialized. Call init() first.'));
+        return;
+      }
+
+      const id = crypto.randomUUID();
+
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Add sample request timed out after ${this.defaultTimeout}ms`));
+      }, this.defaultTimeout);
+
+      this.pendingRequests.set(id, {
+        kind: 'sample',
+        resolve: (sample) => {
+          clearTimeout(timeoutId);
+          resolve(sample);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+
+      this.worker.postMessage({
+        type: 'addSample',
+        requestId: id,
+        sample: params,
+      });
+    });
+  }
+
+  removeSample(sampleId: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error('Worker not initialized. Call init() first.'));
+        return;
+      }
+
+      const id = crypto.randomUUID();
+
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Remove sample request timed out`));
+      }, this.defaultTimeout);
+
+      this.pendingRequests.set(id, {
+        kind: 'success',
+        resolve: (success) => {
+          clearTimeout(timeoutId);
+          resolve(success);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+
+      this.worker.postMessage({
+        type: 'removeSample',
+        requestId: id,
+        sampleId,
+      });
+    });
+  }
+
+  removeClass(commandId: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error('Worker not initialized. Call init() first.'));
+        return;
+      }
+
+      const id = crypto.randomUUID();
+
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Remove class request timed out`));
+      }, this.defaultTimeout);
+
+      this.pendingRequests.set(id, {
+        kind: 'success',
+        resolve: (success) => {
+          clearTimeout(timeoutId);
+          resolve(success);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+
+      this.worker.postMessage({
+        type: 'removeClass',
+        requestId: id,
+        commandId,
+      });
+    });
+  }
+
+  getSamplesAndPrototypes(): Promise<{ samples: TrainingSample[]; prototypes: ClassPrototype[] }> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error('Worker not initialized. Call init() first.'));
+        return;
+      }
+
+      const id = crypto.randomUUID();
+
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Get samples request timed out`));
+      }, this.defaultTimeout);
+
+      this.pendingRequests.set(id, {
+        kind: 'list',
+        resolve: (value) => {
+          clearTimeout(timeoutId);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+
+      this.worker.postMessage({
+        type: 'getSamples',
+        requestId: id,
+      });
+    });
+  }
+
   terminate(): void {
     if (this.worker) {
       this.worker.terminate();
@@ -108,21 +255,33 @@ export class InferenceWorkerManager {
     this.pendingRequests.clear();
   }
 
-  private handleMessage(e: MessageEvent<WorkerMessage>): void {
-    const { type, requestId, result, error } = e.data;
+  private handleMessage(e: MessageEvent<WorkerResponse>): void {
+    const { type, requestId } = e.data;
+    if (!requestId) return;
 
-    if (type === 'result' && requestId) {
-      const pending = this.pendingRequests.get(requestId);
-      if (pending) {
-        this.pendingRequests.delete(requestId);
-        if (error) {
-          pending.reject(new Error(error));
-        } else if (result) {
-          pending.resolve(result);
-        } else {
-          pending.reject(new Error('No result or error received'));
-        }
-      }
+    const pending = this.pendingRequests.get(requestId);
+    if (!pending) return;
+
+    this.pendingRequests.delete(requestId);
+
+    if (e.data.error) {
+      pending.reject(new Error(e.data.error));
+      return;
+    }
+
+    if (pending.kind === 'infer' && type === 'result' && e.data.result) {
+      pending.resolve(e.data.result);
+    } else if (pending.kind === 'sample' && type === 'sampleAdded' && e.data.sample) {
+      pending.resolve(e.data.sample);
+    } else if (pending.kind === 'success' && (type === 'sampleRemoved' || type === 'classRemoved')) {
+      pending.resolve(e.data.success ?? true);
+    } else if (pending.kind === 'list' && type === 'samplesList') {
+      pending.resolve({
+        samples: e.data.samples ?? [],
+        prototypes: e.data.prototypes ?? [],
+      });
+    } else {
+      pending.reject(new Error(`Unexpected response type: ${type}`));
     }
   }
 
