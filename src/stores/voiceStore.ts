@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { CommandQueue } from "../utils/commandQueue";
+import type { QueuedCommand } from "../utils/commandQueue";
 
 export interface ActionHistoryItem {
   id: string;
@@ -20,6 +22,9 @@ interface VoiceState {
   audioLevel: number;
   waveformData: number[];
   actions: ActionHistoryItem[];
+  commandQueue: QueuedCommand[];
+  queuePosition: number;
+  isProcessingQueue: boolean;
 
   startListening: () => void;
   stopListening: () => void;
@@ -35,6 +40,10 @@ interface VoiceState {
   setWaveformData: (data: number[]) => void;
   addAction: (action: ActionHistoryItem) => void;
   resetResult: () => void;
+  enqueueCommand: (audioData: Float32Array, sampleRate: number) => void;
+  updateQueue: (queue: QueuedCommand[]) => void;
+  setProcessingQueue: (processing: boolean) => void;
+  setInferenceLatency: (latency: number) => void;
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -49,6 +58,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   audioLevel: 0,
   waveformData: [],
   actions: [],
+  commandQueue: [],
+  queuePosition: 0,
+  isProcessingQueue: false,
 
   startListening: () =>
     set({ isListening: true, isUnrecognized: false, currentResult: null }),
@@ -89,4 +101,14 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       probabilityDistribution: [],
       isUnrecognized: false,
     }),
+
+  enqueueCommand: (audioData, sampleRate) => {
+    CommandQueue.getInstance().enqueue(audioData, sampleRate);
+  },
+
+  updateQueue: (queue) => set({ commandQueue: queue }),
+
+  setProcessingQueue: (processing) => set({ isProcessingQueue: processing }),
+
+  setInferenceLatency: (latency) => set({ inferenceLatency: latency }),
 }));
